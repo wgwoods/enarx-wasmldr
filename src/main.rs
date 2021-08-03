@@ -61,17 +61,12 @@ fn main() {
         .read_to_end(&mut bytes)
         .expect("Failed to load workload");
 
-    let wasm_args: Vec<String> = if let Some(a) = args.values_of("WASM_ARGS") {
-        a.map(|s| s.to_owned()).collect()
-    } else {
-        Vec::new()
-    };
-
+    let wasm_args: Vec<&str> = args.values_of("ARGS").unwrap_or_default().collect();
     let wasm_env: Vec<(String, String)> = std::env::vars().collect();
 
     // FUTURE: measure wasm_env and wasm_args
 
-    let result = workload::run(bytes, &wasm_args, &wasm_env).expect("Failed to run workload");
+    let result = workload::run(bytes, wasm_args, wasm_env).expect("Failed to run workload");
 
     info!("got result: {:#?}", result);
 }

@@ -38,11 +38,10 @@ impl From<wasmtime_wasi::Error> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Runs a WebAssembly workload.
-//pub fn run<T: AsRef<[u8]>, U: AsRef<[u8]>, V: std::borrow::Borrow<(U, U)>>(
-pub fn run(
+pub fn run<T: AsRef<str>, U: AsRef<str>>(
     bytes: impl AsRef<[u8]>,
-    args: impl AsRef<[String]>,
-    envs: impl AsRef<[(String, String)]>,
+    args: impl IntoIterator<Item = T>,
+    envs: impl IntoIterator<Item = (U, U)>,
 ) -> Result<Box<[wasmtime::Val]>> {
     debug!("configuring wasmtime engine");
     let mut config = wasmtime::Config::new();
@@ -63,15 +62,18 @@ pub fn run(
     wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
 
     debug!("creating WASI context");
-    let wasi = WasiCtxBuilder::new()
-        .args(args.as_ref())
-        .or(Err(Error::StringTableError))?
-        .envs(envs.as_ref())
-        .or(Err(Error::StringTableError))?
-        .build();
+    let mut wasi = WasiCtxBuilder::new();
+    for arg in args {
+        wasi = wasi.arg(arg.as_ref()).or(Err(Error::StringTableError))?;
+    }
+    for kv in envs {
+        wasi = wasi
+            .env(kv.0.as_ref(), kv.1.as_ref())
+            .or(Err(Error::StringTableError))?;
+    }
 
     debug!("creating wasmtime Store");
-    let mut store = wasmtime::Store::new(&engine, wasi);
+    let mut store = wasmtime::Store::new(&engine, wasi.build());
 
     debug!("instantiating module from bytes");
     let module = wasmtime::Module::from_binary(&engine, bytes.as_ref())?;
@@ -96,16 +98,18 @@ pub fn run(
 #[cfg(test)]
 pub(crate) mod test {
     use crate::workload;
+    use std::iter::empty;
 
     #[test]
     fn workload_run_return_1() {
         let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/fixtures/return_1.wasm")).to_vec();
 
-        let results: Vec<i32> = workload::run(&bytes, Vec::new(), Vec::new())
-            .unwrap()
-            .iter()
-            .map(|v| v.unwrap_i32())
-            .collect();
+        let results: Vec<i32> =
+            workload::run(&bytes, empty::<String>(), empty::<(String, String)>())
+                .unwrap()
+                .iter()
+                .map(|v| v.unwrap_i32())
+                .collect();
 
         assert_eq!(results, vec![1]);
     }
@@ -114,7 +118,7 @@ pub(crate) mod test {
     fn workload_run_no_export() {
         let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/fixtures/no_export.wasm")).to_vec();
 
-        match workload::run(&bytes, vec![], vec![]) {
+        match workload::run(&bytes, empty::<String>(), empty::<(String, String)>()) {
             Err(workload::Error::ExportNotFound) => {}
             _ => panic!("unexpected error"),
         };
@@ -128,7 +132,7 @@ pub(crate) mod test {
         let results: Vec<i32> = workload::run(
             &bytes,
             vec!["a".to_string(), "b".to_string(), "c".to_string()],
-            vec![],
+            vec![("k", "v")],
         )
         .unwrap()
         .iter()
