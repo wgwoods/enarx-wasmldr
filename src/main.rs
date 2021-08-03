@@ -28,44 +28,32 @@
 #![deny(missing_docs)]
 #![deny(clippy::all)]
 
-mod bundle;
-mod config;
-mod virtfs;
+mod cli;
 mod workload;
 
-use cfg_if::cfg_if;
-use log::info;
+use clap::crate_version;
+
+use log::{debug, info};
 
 use std::fs::File;
 use std::io::Read;
-#[cfg(unix)]
-use std::os::unix::io::FromRawFd;
-
-#[cfg(unix)]
-const FD: std::os::unix::io::RawFd = 3;
 
 fn main() {
-    let _ = env_logger::try_init_from_env(env_logger::Env::default());
+    // Initialize the logger, taking settings from the default env vars
+    env_logger::Builder::from_default_env().init();
 
-    // Skip the program name by default, but also skip the enarx-keepldr image
-    // name if it happens to precede the regular command line arguments.
-    let nskip = 1 + std::env::args()
-        .take(1)
-        .filter(|s| s.ends_with("enarx-keepldr"))
-        .count();
-    let mut args = std::env::args().skip(nskip);
-    let vars = std::env::vars();
+    info!("version {} starting up", crate_version!());
 
-    let mut reader = if let Some(path) = args.next() {
+    debug!("parsing argv");
+    let args = cli::parse_args();
+    debug!("module: {:?}", args.value_of("MODULE"));
+    debug!("args: {:?}", args.value_of("ARGS"));
+
+    let mut reader = if let Some(path) = args.value_of("MODULE") {
+        info!("reading {}", path);
         File::open(&path).expect("Unable to open file")
     } else {
-        cfg_if! {
-            if #[cfg(unix)] {
-                unsafe { File::from_raw_fd(FD) }
-            } else {
-                unreachable!();
-            }
-        }
+        unreachable!(); // Required args can't be missing...
     };
 
     let mut bytes = Vec::new();
@@ -73,7 +61,17 @@ fn main() {
         .read_to_end(&mut bytes)
         .expect("Failed to load workload");
 
-    let result = workload::run(&bytes, args, vars).expect("Failed to run workload");
+    let wasm_args: Vec<String> = if let Some(a) = args.values_of("WASM_ARGS") {
+        a.map(|s| s.to_owned()).collect()
+    } else {
+        Vec::new()
+    };
+
+    let wasm_env: Vec<(String, String)> = std::env::vars().collect();
+
+    // FUTURE: measure wasm_env and wasm_args
+
+    let result = workload::run(bytes, &wasm_args, &wasm_env).expect("Failed to run workload");
 
     info!("got result: {:#?}", result);
 }
