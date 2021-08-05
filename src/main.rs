@@ -31,9 +31,8 @@
 mod cli;
 mod workload;
 
-use clap::crate_version;
-
 use log::{debug, info};
+use structopt::StructOpt;
 
 use std::fs::File;
 use std::io::Read;
@@ -42,31 +41,29 @@ fn main() {
     // Initialize the logger, taking settings from the default env vars
     env_logger::Builder::from_default_env().init();
 
-    info!("version {} starting up", crate_version!());
+    info!("version {} starting up", env!("CARGO_PKG_VERSION"));
 
     debug!("parsing argv");
-    let args = cli::parse_args();
-    debug!("module: {:?}", args.value_of("MODULE"));
-    debug!("args: {:?}", args.value_of("ARGS"));
+    let opts = cli::RunOptions::from_args();
+    info!("opts: {:#?}", opts);
 
-    let mut reader = if let Some(path) = args.value_of("MODULE") {
-        info!("reading {}", path);
-        File::open(&path).expect("Unable to open file")
-    } else {
-        unreachable!(); // Required args can't be missing...
-    };
+    info!("reading {:?}", opts.module);
+    // TODO: don't just panic here...
+    let mut reader = File::open(&opts.module).expect("Unable to open file");
 
     let mut bytes = Vec::new();
     reader
         .read_to_end(&mut bytes)
         .expect("Failed to load workload");
 
-    let wasm_args: Vec<&str> = args.values_of("ARGS").unwrap_or_default().collect();
-    let wasm_env: Vec<(String, String)> = std::env::vars().collect();
+    // FUTURE: measure opts.envs, opts.args, opts.wasm_features
+    // FUTURE: fork() the workload off into a separate memory space
 
-    // FUTURE: measure wasm_env and wasm_args
-
-    let result = workload::run(bytes, wasm_args, wasm_env).expect("Failed to run workload");
-
+    info!("running workload");
+    // TODO: pass opts.wasm_features
+    let result = workload::run(bytes, opts.args, opts.envs).expect("Failed to run workload");
     info!("got result: {:#?}", result);
+    // TODO: exit with the resulting code, if the result is a return code
+    // FUTURE: produce attestation report here
+
 }
